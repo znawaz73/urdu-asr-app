@@ -273,6 +273,7 @@
         connecting:   ['dot--amber dot--pulse', 'Connecting…'],
         connected:    ['dot--green',            'Connected'],
         disconnected: ['dot--grey',             'Disconnected'],
+        lost:         ['dot--red',              'Disconnected'],
         error:        ['dot--red',              'Error'],
       };
       const [cls, label] = map[state] || map.disconnected;
@@ -441,7 +442,7 @@
           stopAudio();
           closeWs();
           resetButton();
-          setStatus('disconnected');
+          setStatus('lost');
           break;
       }
     }
@@ -450,7 +451,7 @@
       stopAudio();
       closeWs();
       resetButton();
-      setStatus('disconnected');
+      setStatus('lost');
       showError(msg, true);
     }
 
