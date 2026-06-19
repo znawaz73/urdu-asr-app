@@ -332,18 +332,12 @@
       if (pollTimer === null) return; // stale tick after stopPolling()
       pollElapsed += POLL_INTERVAL;
       try {
-        const res = await fetch(BASE_URL + '/ready');
-        if (res.ok) {
-          const data = await res.json().catch(() => ({}));
-          if (data.chunk_samples && data.chunk_samples !== CHUNK_SAMPLES)
-            console.warn('chunk_samples mismatch — server:', data.chunk_samples, 'client:', CHUNK_SAMPLES);
-          if (data.sample_rate && data.sample_rate !== 16000)
-            console.warn('sample_rate mismatch — server:', data.sample_rate, 'client: 16000');
-          stopPolling();
-          setStatus('disconnected');
-          $start.disabled = false;
-          return;
-        }
+        // no-cors: allows fetch from any origin (file://, http://localhost:N) without CORS headers on backend
+        await fetch(BASE_URL + '/ready', { mode: 'no-cors' });
+        stopPolling();
+        setStatus('disconnected');
+        $start.disabled = false;
+        return;
       } catch (_) {}
       if (pollElapsed >= POLL_TIMEOUT) {
         stopPolling();
