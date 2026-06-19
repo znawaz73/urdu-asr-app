@@ -325,33 +325,37 @@
     $clear.addEventListener('click', clearTranscript);
 
     /* ── READY POLL ── */
+    async function doPoll() {
+      if (pollTimer === null) return; // stale tick after stopPolling()
+      pollElapsed += POLL_INTERVAL;
+      try {
+        const res = await fetch(BASE_URL + '/ready');
+        if (res.ok) {
+          const data = await res.json().catch(() => ({}));
+          if (data.chunk_samples && data.chunk_samples !== CHUNK_SAMPLES)
+            console.warn('chunk_samples mismatch — server:', data.chunk_samples, 'client:', CHUNK_SAMPLES);
+          if (data.sample_rate && data.sample_rate !== 16000)
+            console.warn('sample_rate mismatch — server:', data.sample_rate, 'client: 16000');
+          stopPolling();
+          setStatus('disconnected');
+          $start.disabled = false;
+          return;
+        }
+      } catch (_) {}
+      if (pollElapsed >= POLL_TIMEOUT) {
+        stopPolling();
+        setStatus('error');
+        showError('Backend not responding after 60 s. Is docker compose up running?', true);
+      }
+    }
+
     function startPolling() {
       pollElapsed = 0;
       clearError();
       setStatus('loading');
       $start.disabled = true;
-      pollTimer = setInterval(async () => {
-        pollElapsed += POLL_INTERVAL;
-        try {
-          const res = await fetch(BASE_URL + '/ready');
-          if (res.ok) {
-            const data = await res.json().catch(() => ({}));
-            if (data.chunk_samples && data.chunk_samples !== CHUNK_SAMPLES)
-              console.warn('chunk_samples mismatch — server:', data.chunk_samples, 'client:', CHUNK_SAMPLES);
-            if (data.sample_rate && data.sample_rate !== 16000)
-              console.warn('sample_rate mismatch — server:', data.sample_rate, 'client: 16000');
-            stopPolling();
-            setStatus('disconnected');
-            $start.disabled = false;
-            return;
-          }
-        } catch (_) {}
-        if (pollElapsed >= POLL_TIMEOUT) {
-          stopPolling();
-          setStatus('error');
-          showError('Backend not responding after 60 s. Is docker compose up running?', true);
-        }
-      }, POLL_INTERVAL);
+      doPoll();                                    // immediate first check
+      pollTimer = setInterval(doPoll, POLL_INTERVAL);
     }
 
     function stopPolling() {
