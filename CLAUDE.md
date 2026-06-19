@@ -84,8 +84,10 @@ Wait for explicit "go" before writing code.
 
 - **`ur` is not in the backend's `LANG_TO_ID` map.** Sending `language: "ur"` will
   return `{"event": "error"}`. Do not attempt it.
-- **Default language: `auto`** — the model detects the language from speech. This is
-  the only sensible default given the lack of Urdu support.
+- **Supported language selector options:** `auto` (default) and `en` (English). `en` is
+  in the backend's `LANG_TO_ID` map and is safe to send. Do not add other language codes
+  without verifying them against `LANG_TO_ID` first.
+- **Default language: `auto`** — the model detects the language from speech.
 - **Display the model's raw output as-is.** Do not enforce RTL layout, do not apply
   Nastaliq fonts. If the model produces Devanagari for Urdu speech, display Devanagari.
   If it produces Arabic script, display Arabic script. Do not post-process or transliterate.
