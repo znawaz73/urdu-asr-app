@@ -75,10 +75,3 @@ Replace `localhost:8000` with your server's address (e.g., `192.168.1.100:8000`)
 ```
 
 The app is a single HTML file. No npm, no build step, no external dependencies.
-
-## Technical Notes
-
-- **Audio format:** Mono, Float32, 16 kHz (resampled in the browser if necessary)
-- **Streaming protocol:** WebSocket to `ws://localhost:8000/v1/transcriptions/stream`
-- **Language detection:** Uses the backend's `auto` mode by default (can be changed via language selector)
-- **Transcript persistence:** Recordings accumulate within a session. Use the **Clear** button to reset.
