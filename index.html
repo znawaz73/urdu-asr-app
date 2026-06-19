@@ -251,6 +251,7 @@
     let sampleBuf = new Float32Array(CHUNK_SAMPLES), sampleCount = 0;
     let isRecording = false, isStopping = false;
     let pollTimer = null, pollElapsed = 0, blobUrl = null;
+    let resampleChain = Promise.resolve();
 
     /* ── UI REFS ── */
     const $dot     = document.getElementById('status-dot');
@@ -393,8 +394,11 @@
       };
 
       ws.onclose = () => {
-        if (isStopping) return; // expected close handled after final
-        handleDisconnect('Connection lost.');
+        if (isStopping) {
+          handleDisconnect('Connection closed before transcription completed.');
+        } else {
+          handleDisconnect('Connection lost.');
+        }
       };
 
       ws.onerror = () => {
@@ -511,14 +515,17 @@ registerProcessor('pcm-processor', PCMProcessor);
     }
 
     async function startAudio() {
-      sampleBuf   = new Float32Array(CHUNK_SAMPLES);
-      sampleCount = 0;
+      sampleBuf      = new Float32Array(CHUNK_SAMPLES);
+      sampleCount    = 0;
+      resampleChain  = Promise.resolve();
 
       try {
         micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
       } catch (_) {
         showError('Microphone access denied. Please allow mic access and retry.', false);
-        handleDisconnect('Mic denied.');
+        closeWs();
+        resetButton();
+        setStatus('disconnected');
         return;
       }
 
@@ -533,10 +540,12 @@ registerProcessor('pcm-processor', PCMProcessor);
           if (!blobUrl) blobUrl = buildWorkletBlobUrl();
           await audioCtx.audioWorklet.addModule(blobUrl);
           workletNode = new AudioWorkletNode(audioCtx, 'pcm-processor');
-          workletNode.port.onmessage = async (e) => {
-            let s = e.data;
-            if (needsResample) s = await resample(s, nativeRate);
-            pushSamples(s);
+          workletNode.port.onmessage = (e) => {
+            const raw = e.data;
+            resampleChain = resampleChain.then(async () => {
+              const s = needsResample ? await resample(raw, nativeRate) : raw;
+              pushSamples(s);
+            });
           };
           micSource.connect(workletNode);
           return;
@@ -549,13 +558,18 @@ registerProcessor('pcm-processor', PCMProcessor);
 
       // ScriptProcessorNode fallback
       procNode = audioCtx.createScriptProcessor(4096, 1, 1);
-      procNode.onaudioprocess = async (e) => {
-        let s = e.inputBuffer.getChannelData(0).slice();
-        if (needsResample) s = await resample(s, nativeRate);
-        pushSamples(s);
+      procNode.onaudioprocess = (e) => {
+        const raw = e.inputBuffer.getChannelData(0).slice();
+        resampleChain = resampleChain.then(async () => {
+          const s = needsResample ? await resample(raw, nativeRate) : raw;
+          pushSamples(s);
+        });
       };
+      const silentGain = audioCtx.createGain();
+      silentGain.gain.value = 0;
       micSource.connect(procNode);
-      procNode.connect(audioCtx.destination); // ScriptProcessor requires a destination
+      procNode.connect(silentGain);
+      silentGain.connect(audioCtx.destination);
     }
 
     function stopAudio() {
