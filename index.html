@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Urdu ASR — Realtime Transcription</title>
+  <style>
+    /* ── Reset ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /* ── Base ── */
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #0f1117;
+      color: #cbd5e1;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 1.5rem 1rem;
+      gap: 1rem;
+    }
+
+    /* ── Header ── */
+    header {
+      text-align: center;
+      width: 100%;
+      max-width: 760px;
+    }
+    header h1 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      color: #f1f5f9;
+      letter-spacing: -0.02em;
+    }
+    header p.subtitle {
+      font-size: 0.875rem;
+      color: #64748b;
+      margin-top: 0.25rem;
+    }
+
+    /* ── Status bar ── */
+    .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      width: 100%;
+      max-width: 760px;
+      background: #0a0d14;
+      border: 1px solid #1e2433;
+      border-radius: 0.5rem;
+      padding: 0.5rem 0.875rem;
+    }
+    .status-pill {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.8125rem;
+      color: #94a3b8;
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .dot--grey  { background: #64748b; }
+    .dot--amber { background: #fcd34d; }
+    .dot--green { background: #22c55e; }
+    .dot--red   { background: #f87171; }
+    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+    .dot--pulse { animation: pulse 1.2s ease-in-out infinite; }
+
+    .lang-label {
+      margin-left: auto;
+      font-size: 0.75rem;
+      color: #64748b;
+      font-style: italic;
+    }
+
+    /* ── Controls ── */
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      width: 100%;
+      max-width: 760px;
+    }
+    button {
+      cursor: pointer;
+      border: none;
+      border-radius: 0.375rem;
+      font-size: 0.875rem;
+      font-weight: 600;
+      padding: 0.5rem 1.25rem;
+      transition: opacity 0.15s;
+    }
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+    #start-btn {
+      background: #16a34a;
+      color: #fff;
+      min-width: 7rem;
+    }
+    #start-btn.recording {
+      background: #dc2626;
+    }
+    #start-btn.recording::before {
+      content: '';
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #fff;
+      margin-right: 0.5rem;
+      animation: pulse 1.2s ease-in-out infinite;
+      vertical-align: middle;
+    }
+    #start-btn.stopping {
+      background: #374151;
+      color: #9ca3af;
+    }
+    #lang-select {
+      background: #0a0d14;
+      border: 1px solid #1e2433;
+      border-radius: 0.375rem;
+      color: #cbd5e1;
+      font-size: 0.875rem;
+      padding: 0.5rem 0.75rem;
+      cursor: pointer;
+    }
+    #clear-btn {
+      background: #1e2433;
+      color: #94a3b8;
+      margin-left: auto;
+    }
+    #clear-btn:hover:not(:disabled) {
+      background: #2d3748;
+    }
+
+    /* ── Error banner ── */
+    .error-banner {
+      width: 100%;
+      max-width: 760px;
+      background: #1c0a0a;
+      border: 1px solid #7f1d1d;
+      border-radius: 0.5rem;
+      padding: 0.625rem 0.875rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      font-size: 0.8125rem;
+      color: #fca5a5;
+    }
+    .error-banner.hidden { display: none; }
+    .retry-btn {
+      background: #7f1d1d;
+      color: #fca5a5;
+      font-size: 0.75rem;
+      padding: 0.25rem 0.75rem;
+      margin-left: auto;
+      flex-shrink: 0;
+    }
+    .retry-btn.hidden { display: none; }
+    .retry-btn:hover:not(:disabled) { background: #991b1b; }
+
+    /* ── Transcript zones ── */
+    .history {
+      width: 100%;
+      max-width: 760px;
+      min-height: 12rem;
+      max-height: 24rem;
+      overflow-y: auto;
+      background: #0a0d14;
+      border: 1px solid #1e2433;
+      border-radius: 0.5rem;
+      padding: 0.875rem;
+      font-size: 1rem;
+      line-height: 1.7;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .history .placeholder {
+      color: #64748b;
+      font-style: italic;
+      font-size: 0.875rem;
+    }
+    .live {
+      width: 100%;
+      max-width: 760px;
+      min-height: 2.5rem;
+      background: #0d1220;
+      border: 1px solid #1e2433;
+      border-radius: 0.5rem;
+      padding: 0.625rem 0.875rem;
+      font-size: 1rem;
+      color: #fcd34d;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>Urdu ASR</h1>
+    <p class="subtitle">Realtime speech transcription — Nemotron 3.5</p>
+  </header>
+
+  <div class="status-bar">
+    <span class="status-pill">
+      <span id="status-dot" class="dot dot--grey"></span>
+      <span id="status-text">Loading model…</span>
+    </span>
+    <span id="lang-label" class="lang-label"></span>
+  </div>
+
+  <div class="controls">
+    <button id="start-btn" disabled>Start Recording</button>
+    <select id="lang-select">
+      <option value="auto">auto (detect)</option>
+      <option value="en">English</option>
+    </select>
+    <button id="clear-btn">Clear</button>
+  </div>
+
+  <div id="error-banner" class="error-banner hidden">
+    <span id="error-msg"></span>
+    <button id="retry-btn" class="retry-btn hidden">Retry</button>
+  </div>
+
+  <div id="history" class="history">
+    <span class="placeholder">Transcript will appear here…</span>
+  </div>
+
+  <div id="live" class="live"></div>
+
+  <script>
+    /* ── CONFIG ── */
+    const BASE_URL      = 'http://localhost:8000';
+    const WS_URL        = BASE_URL.replace('http', 'ws') + '/v1/transcriptions/stream';
+    const CHUNK_SAMPLES = 8960;
+    const CHUNK_MS      = 560;
+    const POLL_INTERVAL = 2000;
+    const POLL_TIMEOUT  = 60000;
+
+    /* ── STATE ── */
+    let ws = null, audioCtx = null, micStream = null, workletNode = null, procNode = null;
+    let sampleBuf = new Float32Array(CHUNK_SAMPLES), sampleCount = 0;
+    let isRecording = false, isStopping = false;
+    let pollTimer = null, pollElapsed = 0, blobUrl = null;
+    let resampleChain = Promise.resolve();
+
+    /* ── UI REFS ── */
+    const $dot     = document.getElementById('status-dot');
+    const $txt     = document.getElementById('status-text');
+    const $lang    = document.getElementById('lang-label');
+    const $sel     = document.getElementById('lang-select');
+    const $start   = document.getElementById('start-btn');
+    const $clear   = document.getElementById('clear-btn');
+    const $history = document.getElementById('history');
+    const $live    = document.getElementById('live');
+    const $errBan  = document.getElementById('error-banner');
+    const $errMsg  = document.getElementById('error-msg');
+    const $retry   = document.getElementById('retry-btn');
+
+    /* ── UI FUNCTIONS ── */
+    function setStatus(state) {
+      const map = {
+        loading:      ['dot--grey',             'Loading model…'],
+        connecting:   ['dot--amber dot--pulse', 'Connecting…'],
+        connected:    ['dot--green',            'Connected'],
+        disconnected: ['dot--grey',             'Disconnected'],
+        lost:         ['dot--red',              'Disconnected'],
+        error:        ['dot--red',              'Error'],
+      };
+      const [cls, label] = map[state] || map.disconnected;
+      $dot.className = 'dot ' + cls;
+      $txt.textContent = label;
+    }
+
+    function setLang(name) {
+      $lang.textContent = name ? 'Detected: ' + name : '';
+    }
+
+    function appendHistory(text) {
+      // Remove placeholder if present
+      const ph = $history.querySelector('.placeholder');
+      if (ph) ph.remove();
+      const node = document.createTextNode(text + '\n');
+      $history.appendChild(node);
+      $history.scrollTop = $history.scrollHeight;
+    }
+
+    function appendLive(token) {
+      $live.textContent += token;
+    }
+
+    function clearLive() {
+      $live.textContent = '';
+    }
+
+    function showError(msg, withRetry) {
+      $errMsg.textContent = msg;
+      $errBan.classList.remove('hidden');
+      if (withRetry) {
+        $retry.classList.remove('hidden');
+      } else {
+        $retry.classList.add('hidden');
+      }
+    }
+
+    function clearError() {
+      $errBan.classList.add('hidden');
+      $errMsg.textContent = '';
+      $retry.classList.add('hidden');
+    }
+
+    function clearTranscript() {
+      $history.innerHTML = '<span class="placeholder">Transcript will appear here…</span>';
+      clearLive();
+      setLang('');
+    }
+
+    /* ── EVENTS: Clear ── */
+    $clear.addEventListener('click', clearTranscript);
+
+    /* ── READY POLL ── */
+    async function doPoll() {
+      if (pollTimer === null) return; // stale tick after stopPolling()
+      pollElapsed += POLL_INTERVAL;
+      try {
+        const res = await fetch(BASE_URL + '/ready');
+        if (res.ok) {
+          const data = await res.json().catch(() => ({}));
+          if (data.chunk_samples && data.chunk_samples !== CHUNK_SAMPLES)
+            console.warn('chunk_samples mismatch — server:', data.chunk_samples, 'client:', CHUNK_SAMPLES);
+          if (data.sample_rate && data.sample_rate !== 16000)
+            console.warn('sample_rate mismatch — server:', data.sample_rate, 'client: 16000');
+          stopPolling();
+          setStatus('disconnected');
+          $start.disabled = false;
+          return;
+        }
+      } catch (_) {}
+      if (pollElapsed >= POLL_TIMEOUT) {
+        stopPolling();
+        setStatus('error');
+        showError('Backend not responding after 60 s. Is docker compose up running?', true);
+      }
+    }
+
+    function startPolling() {
+      pollElapsed = 0;
+      clearError();
+      setStatus('loading');
+      $start.disabled = true;
+      pollTimer = -1;                              // sentinel: guard knows polling is active
+      doPoll();                                    // immediate first check
+      pollTimer = setInterval(doPoll, POLL_INTERVAL);
+    }
+
+    function stopPolling() {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+
+    /* ── EVENTS: Retry ── */
+    $retry.addEventListener('click', startPolling);
+
+    /* ── WEBSOCKET ── */
+    function resetButton() {
+      isRecording = false;
+      isStopping  = false;
+      $start.disabled = false;
+      $start.textContent = 'Start Recording';
+      $start.className = '';
+      $sel.disabled = false;
+    }
+
+    function openWs() {
+      setStatus('connecting');
+      clearError();
+      ws = new WebSocket(WS_URL);
+      ws.binaryType = 'arraybuffer';
+
+      ws.onopen = () => sendConfig();
+
+      ws.onmessage = (e) => {
+        let msg;
+        try { msg = JSON.parse(e.data); } catch (_) { return; }
+        handleMessage(msg);
+      };
+
+      ws.onclose = () => {
+        if (isStopping) {
+          handleDisconnect('Connection closed before transcription completed.');
+        } else {
+          handleDisconnect('Connection lost.');
+        }
+      };
+
+      ws.onerror = () => {
+        handleDisconnect('Backend not running. Check that docker compose up is running.');
+      };
+    }
+
+    function sendConfig() {
+      ws.send(JSON.stringify({
+        language:    $sel.value,
+        sample_rate: 16000,
+        chunk_ms:    CHUNK_MS,
+        use_vad:     false,
+        format:      'f32le',
+      }));
+    }
+
+    function handleMessage(msg) {
+      switch (msg.event) {
+        case 'ready':
+          setStatus('connected');
+          setLang(msg.language_name || '');
+          startAudio();
+          break;
+        case 'partial':
+          if (msg.text) appendLive(msg.text);
+          break;
+        case 'final': {
+          const text = $live.textContent.trim();
+          appendHistory(text || '(no speech detected)');
+          clearLive();
+          closeWs();
+          stopAudio();
+          resetButton();
+          setStatus('disconnected');
+          break;
+        }
+        case 'error':
+          showError(msg.message || 'Transcription error.', false);
+          stopAudio();
+          closeWs();
+          resetButton();
+          setStatus('lost');
+          break;
+      }
+    }
+
+    function handleDisconnect(msg) {
+      stopAudio();
+      closeWs();
+      resetButton();
+      setStatus('lost');
+      showError(msg, true);
+    }
+
+    function closeWs() {
+      isStopping = false;
+      if (!ws) return;
+      ws.onclose = null;
+      ws.onerror = null;
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        ws.close();
+      }
+      ws = null;
+    }
+
+    /* ── AUDIO ── */
+    function buildWorkletBlobUrl() {
+      const src = `
+class PCMProcessor extends AudioWorkletProcessor {
+  process(inputs) {
+    const ch = inputs[0]?.[0];
+    if (ch) this.port.postMessage(ch.slice());
+    return true;
+  }
+}
+registerProcessor('pcm-processor', PCMProcessor);
+`;
+      return URL.createObjectURL(new Blob([src], { type: 'application/javascript' }));
+    }
+
+    async function resample(samples, fromRate) {
+      const targetLen = Math.round(samples.length * 16000 / fromRate);
+      const offCtx = new OfflineAudioContext(1, targetLen, 16000);
+      const buf = offCtx.createBuffer(1, samples.length, fromRate);
+      buf.copyToChannel(samples, 0);
+      const src = offCtx.createBufferSource();
+      src.buffer = buf;
+      src.connect(offCtx.destination);
+      src.start();
+      const rendered = await offCtx.startRendering();
+      return rendered.getChannelData(0);
+    }
+
+    function pushSamples(samples) {
+      let offset = 0;
+      while (offset < samples.length) {
+        const room = CHUNK_SAMPLES - sampleCount;
+        const take = Math.min(room, samples.length - offset);
+        sampleBuf.set(samples.subarray(offset, offset + take), sampleCount);
+        sampleCount += take;
+        offset += take;
+        if (sampleCount === CHUNK_SAMPLES) {
+          sendChunk();
+          sampleBuf   = new Float32Array(CHUNK_SAMPLES);
+          sampleCount = 0;
+        }
+      }
+    }
+
+    function sendChunk() {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      ws.send(new Float32Array(sampleBuf).buffer);
+    }
+
+    async function startAudio() {
+      sampleBuf      = new Float32Array(CHUNK_SAMPLES);
+      sampleCount    = 0;
+      resampleChain  = Promise.resolve();
+
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      } catch (_) {
+        showError('Microphone access denied. Please allow mic access and retry.', false);
+        closeWs();
+        resetButton();
+        setStatus('disconnected');
+        return;
+      }
+
+      const ActxClass = window.AudioContext || window.webkitAudioContext;
+      audioCtx = new ActxClass();
+      const micSource  = audioCtx.createMediaStreamSource(micStream);
+      const nativeRate = audioCtx.sampleRate;
+      const needsResample = nativeRate !== 16000;
+
+      if (window.AudioWorkletNode) {
+        try {
+          if (!blobUrl) blobUrl = buildWorkletBlobUrl();
+          await audioCtx.audioWorklet.addModule(blobUrl);
+          workletNode = new AudioWorkletNode(audioCtx, 'pcm-processor');
+          workletNode.port.onmessage = (e) => {
+            const raw = e.data;
+            resampleChain = resampleChain.then(async () => {
+              const s = needsResample ? await resample(raw, nativeRate) : raw;
+              pushSamples(s);
+            });
+          };
+          micSource.connect(workletNode);
+          return;
+        } catch (err) {
+          console.warn('AudioWorklet failed, falling back to ScriptProcessorNode:', err);
+        }
+      } else {
+        console.warn('AudioWorkletNode unavailable, using ScriptProcessorNode');
+      }
+
+      // ScriptProcessorNode fallback
+      procNode = audioCtx.createScriptProcessor(4096, 1, 1);
+      procNode.onaudioprocess = (e) => {
+        const raw = e.inputBuffer.getChannelData(0).slice();
+        resampleChain = resampleChain.then(async () => {
+          const s = needsResample ? await resample(raw, nativeRate) : raw;
+          pushSamples(s);
+        });
+      };
+      const silentGain = audioCtx.createGain();
+      silentGain.gain.value = 0;
+      micSource.connect(procNode);
+      procNode.connect(silentGain);
+      silentGain.connect(audioCtx.destination);
+    }
+
+    function stopAudio() {
+      if (workletNode) { workletNode.disconnect(); workletNode = null; }
+      if (procNode)    { procNode.disconnect();    procNode    = null; }
+      if (audioCtx)   { audioCtx.close();         audioCtx    = null; }
+      if (micStream)  { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+    }
+
+    /* ── EVENTS: Start/Stop ── */
+    $start.addEventListener('click', () => {
+      if (!isRecording && !isStopping) {
+        // Start
+        isRecording = true;
+        $start.textContent = 'Stop Recording';
+        $start.className = 'recording';
+        $sel.disabled = true;
+        clearError();
+        setLang('');
+        openWs();
+      } else if (isRecording && !isStopping) {
+        // Stop
+        isStopping  = true;
+        isRecording = false;
+        $start.textContent = 'Stopping…';
+        $start.className = 'stopping';
+        $start.disabled = true;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ event: 'end' }));
+          // Do NOT close WS here — wait for final event
+        } else {
+          handleDisconnect('Connection lost before stop.');
+        }
+      }
+    });
+
+    /* ── INIT ── */
+    document.addEventListener('DOMContentLoaded', () => {
+      if (!window.AudioContext && !window.webkitAudioContext) {
+        showError('Your browser does not support the Web Audio API. Please use Chrome 120+ or Firefox 120+.', false);
+        return;
+      }
+      startPolling();
+    });
+  </script>
+</body>
+</html>
