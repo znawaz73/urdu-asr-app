@@ -368,6 +368,230 @@
     /* ── EVENTS: Retry ── */
     $retry.addEventListener('click', startPolling);
 
+    /* ── WEBSOCKET ── */
+    function resetButton() {
+      isRecording = false;
+      isStopping  = false;
+      $start.disabled = false;
+      $start.textContent = 'Start Recording';
+      $start.className = '';
+      $sel.disabled = false;
+    }
+
+    function openWs() {
+      setStatus('connecting');
+      clearError();
+      ws = new WebSocket(WS_URL);
+      ws.binaryType = 'arraybuffer';
+
+      ws.onopen = () => sendConfig();
+
+      ws.onmessage = (e) => {
+        let msg;
+        try { msg = JSON.parse(e.data); } catch (_) { return; }
+        handleMessage(msg);
+      };
+
+      ws.onclose = () => {
+        if (isStopping) return; // expected close handled after final
+        handleDisconnect('Connection lost.');
+      };
+
+      ws.onerror = () => {
+        handleDisconnect('Backend not running. Check that docker compose up is running.');
+      };
+    }
+
+    function sendConfig() {
+      ws.send(JSON.stringify({
+        language:    $sel.value,
+        sample_rate: 16000,
+        chunk_ms:    CHUNK_MS,
+        use_vad:     false,
+        format:      'f32le',
+      }));
+    }
+
+    function handleMessage(msg) {
+      switch (msg.event) {
+        case 'ready':
+          setStatus('connected');
+          setLang(msg.language_name || '');
+          startAudio();
+          break;
+        case 'partial':
+          if (msg.text) appendLive(msg.text);
+          break;
+        case 'final': {
+          const text = $live.textContent.trim();
+          appendHistory(text || '(no speech detected)');
+          clearLive();
+          closeWs();
+          stopAudio();
+          resetButton();
+          setStatus('disconnected');
+          break;
+        }
+        case 'error':
+          showError(msg.message || 'Transcription error.', false);
+          stopAudio();
+          closeWs();
+          resetButton();
+          setStatus('disconnected');
+          break;
+      }
+    }
+
+    function handleDisconnect(msg) {
+      stopAudio();
+      closeWs();
+      resetButton();
+      setStatus('disconnected');
+      showError(msg, true);
+    }
+
+    function closeWs() {
+      isStopping = false;
+      if (!ws) return;
+      ws.onclose = null;
+      ws.onerror = null;
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        ws.close();
+      }
+      ws = null;
+    }
+
+    /* ── AUDIO ── */
+    function buildWorkletBlobUrl() {
+      const src = `
+class PCMProcessor extends AudioWorkletProcessor {
+  process(inputs) {
+    const ch = inputs[0]?.[0];
+    if (ch) this.port.postMessage(ch.slice());
+    return true;
+  }
+}
+registerProcessor('pcm-processor', PCMProcessor);
+`;
+      return URL.createObjectURL(new Blob([src], { type: 'application/javascript' }));
+    }
+
+    async function resample(samples, fromRate) {
+      const targetLen = Math.round(samples.length * 16000 / fromRate);
+      const offCtx = new OfflineAudioContext(1, targetLen, 16000);
+      const buf = offCtx.createBuffer(1, samples.length, fromRate);
+      buf.copyToChannel(samples, 0);
+      const src = offCtx.createBufferSource();
+      src.buffer = buf;
+      src.connect(offCtx.destination);
+      src.start();
+      const rendered = await offCtx.startRendering();
+      return rendered.getChannelData(0);
+    }
+
+    function pushSamples(samples) {
+      let offset = 0;
+      while (offset < samples.length) {
+        const room = CHUNK_SAMPLES - sampleCount;
+        const take = Math.min(room, samples.length - offset);
+        sampleBuf.set(samples.subarray(offset, offset + take), sampleCount);
+        sampleCount += take;
+        offset += take;
+        if (sampleCount === CHUNK_SAMPLES) {
+          sendChunk();
+          sampleBuf   = new Float32Array(CHUNK_SAMPLES);
+          sampleCount = 0;
+        }
+      }
+    }
+
+    function sendChunk() {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      ws.send(new Float32Array(sampleBuf).buffer);
+    }
+
+    async function startAudio() {
+      sampleBuf   = new Float32Array(CHUNK_SAMPLES);
+      sampleCount = 0;
+
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      } catch (_) {
+        showError('Microphone access denied. Please allow mic access and retry.', false);
+        handleDisconnect('Mic denied.');
+        return;
+      }
+
+      const ActxClass = window.AudioContext || window.webkitAudioContext;
+      audioCtx = new ActxClass();
+      const micSource  = audioCtx.createMediaStreamSource(micStream);
+      const nativeRate = audioCtx.sampleRate;
+      const needsResample = nativeRate !== 16000;
+
+      if (window.AudioWorkletNode) {
+        try {
+          if (!blobUrl) blobUrl = buildWorkletBlobUrl();
+          await audioCtx.audioWorklet.addModule(blobUrl);
+          workletNode = new AudioWorkletNode(audioCtx, 'pcm-processor');
+          workletNode.port.onmessage = async (e) => {
+            let s = e.data;
+            if (needsResample) s = await resample(s, nativeRate);
+            pushSamples(s);
+          };
+          micSource.connect(workletNode);
+          return;
+        } catch (err) {
+          console.warn('AudioWorklet failed, falling back to ScriptProcessorNode:', err);
+        }
+      } else {
+        console.warn('AudioWorkletNode unavailable, using ScriptProcessorNode');
+      }
+
+      // ScriptProcessorNode fallback
+      procNode = audioCtx.createScriptProcessor(4096, 1, 1);
+      procNode.onaudioprocess = async (e) => {
+        let s = e.inputBuffer.getChannelData(0).slice();
+        if (needsResample) s = await resample(s, nativeRate);
+        pushSamples(s);
+      };
+      micSource.connect(procNode);
+      procNode.connect(audioCtx.destination); // ScriptProcessor requires a destination
+    }
+
+    function stopAudio() {
+      if (workletNode) { workletNode.disconnect(); workletNode = null; }
+      if (procNode)    { procNode.disconnect();    procNode    = null; }
+      if (audioCtx)   { audioCtx.close();         audioCtx    = null; }
+      if (micStream)  { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+    }
+
+    /* ── EVENTS: Start/Stop ── */
+    $start.addEventListener('click', () => {
+      if (!isRecording && !isStopping) {
+        // Start
+        isRecording = true;
+        $start.textContent = 'Stop Recording';
+        $start.className = 'recording';
+        $sel.disabled = true;
+        clearError();
+        setLang('');
+        openWs();
+      } else if (isRecording && !isStopping) {
+        // Stop
+        isStopping  = true;
+        isRecording = false;
+        $start.textContent = 'Stopping…';
+        $start.className = 'stopping';
+        $start.disabled = true;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ event: 'end' }));
+          // Do NOT close WS here — wait for final event
+        } else {
+          handleDisconnect('Connection lost before stop.');
+        }
+      }
+    });
+
     /* ── INIT ── */
     document.addEventListener('DOMContentLoaded', () => {
       if (!window.AudioContext && !window.webkitAudioContext) {
