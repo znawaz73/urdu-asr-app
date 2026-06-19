@@ -354,6 +354,7 @@
       clearError();
       setStatus('loading');
       $start.disabled = true;
+      pollTimer = -1;                              // sentinel: guard knows polling is active
       doPoll();                                    // immediate first check
       pollTimer = setInterval(doPoll, POLL_INTERVAL);
     }
